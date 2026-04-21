@@ -1,0 +1,46 @@
+{
+  "name": "VM Estruturas Metálicas",
+  "short_name": "VM Estruturas",
+  "description": "Projeto, fabricação e montagem de galpões industriais. Do mezanino de 50m² ao galpão de 5.000m².",
+  "lang": "pt-BR",
+  "start_url": "/vm-estruturas-site-lab/",
+  "scope": "/vm-estruturas-site-lab/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A0A0A",
+  "theme_color": "#FFD700",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "assets/vm-logo.png",
+      "sizes": "237x154",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Montar projeto",
+      "short_name": "Projeto",
+      "description": "Abrir configurador de galpão",
+      "url": "/vm-estruturas-site-lab/#configurador"
+    },
+    {
+      "name": "Falar no WhatsApp",
+      "short_name": "WhatsApp",
+      "url": "https://wa.me/5511972328541"
+    }
+  ]
+}

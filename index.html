@@ -25,8 +25,19 @@
 <meta name="author" content="VM Estruturas Metálicas">
 <meta name="geo.region" content="BR-SP">
 <meta name="geo.placename" content="Barueri">
-<link rel="canonical" href="https://vm-estruturas-teste.netlify.app/">
+<link rel="canonical" href="https://vmmanutencaoindustrial-create.github.io/vm-estruturas-site-lab/">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%230A0A0A'/%3E%3Ctext x='50' y='68' font-family='Arial Black, sans-serif' font-size='52' font-weight='900' text-anchor='middle' fill='%23FFD700'%3EVM%3C/text%3E%3C/svg%3E">
+
+<!-- ═══ PWA (instalável no celular como app) ═══ -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VM Estruturas">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="application-name" content="VM Estruturas">
+<meta name="msapplication-TileColor" content="#0A0A0A">
+<meta name="msapplication-TileImage" content="assets/icon-192.png">
 <script type="importmap">
 {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/"}}
 </script>
@@ -7702,6 +7713,321 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && qualModal.classList.contains('open')) closeQual();
 });
 </script>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- ═══ PWA + WEB SHARE + HAPTIC + INSTALL PROMPT (LAB v1) ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+
+  // ───── 1. Service Worker (offline + cache) ─────
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js', { scope: './' })
+        .then(reg => console.log('[VM] Service Worker registrado', reg.scope))
+        .catch(err => console.warn('[VM] SW falhou:', err));
+    });
+  }
+
+  // ───── 2. Haptic feedback (vibração sutil em botões principais) ─────
+  function haptic(pattern) {
+    if ('vibrate' in navigator) {
+      try { navigator.vibrate(pattern || 8); } catch (_) {}
+    }
+  }
+  window.__vmHaptic = haptic;
+  // Adicionar em CTAs principais (WhatsApp, Enviar projeto, Ligar)
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('a, button');
+    if (!t) return;
+    const isImportant = t.matches(
+      '.btn-cfg.fill, .btn-primary, .btn-black, .nav-tel, .wa-fab, ' +
+      '.foot-cta-btn, .cs-btn, .cta-link, #btnEnviarProjeto, #btnEnviarEmail, #btnMaquete'
+    );
+    if (isImportant) haptic([6]);
+  }, { passive: true });
+
+  // ───── 3. Web Share API (compartilhar nativo) ─────
+  function canShare() {
+    return 'share' in navigator;
+  }
+  function shareProject(summary) {
+    if (!canShare()) return false;
+    const url = location.href.split('#')[0];
+    const shareData = {
+      title: 'VM Estruturas Metálicas',
+      text: summary || 'Veja este projeto de galpão que montei no configurador da VM:',
+      url: url
+    };
+    haptic([8]);
+    navigator.share(shareData)
+      .then(() => console.log('[VM] Projeto compartilhado'))
+      .catch((err) => {
+        if (err.name !== 'AbortError') console.warn('[VM] Share falhou:', err);
+      });
+    return true;
+  }
+  window.__vmShare = shareProject;
+
+  // Adiciona botão "COMPARTILHAR" ao lado do Salvar (se Web Share disponível)
+  document.addEventListener('DOMContentLoaded', () => {
+    const ctaRow = document.querySelector('.cta-row');
+    const btnSave = document.getElementById('btnSave');
+    if (!ctaRow || !btnSave) return;
+    if (!canShare()) return;
+    const btnShare = document.createElement('a');
+    btnShare.href = '#';
+    btnShare.className = 'btn-cfg line';
+    btnShare.id = 'btnShare';
+    btnShare.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;gap:8px;';
+    btnShare.innerHTML = '⇪ COMPARTILHAR';
+    btnShare.setAttribute('aria-label', 'Compartilhar projeto');
+    btnShare.addEventListener('click', (e) => {
+      e.preventDefault();
+      const summary = typeof window.__vmBuildProjectSummary === 'function'
+        ? window.__vmBuildProjectSummary()
+        : 'Veja meu projeto de galpão na VM Estruturas';
+      shareProject(summary);
+    });
+    btnSave.parentNode.insertBefore(btnShare, btnSave);
+  });
+
+  // ───── 4. Install Prompt (banner "adicionar à tela inicial") ─────
+  let deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    showInstallBanner();
+  });
+
+  function showInstallBanner() {
+    if (sessionStorage.getItem('vm_install_dismissed')) return;
+    if (document.getElementById('vmInstallBanner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'vmInstallBanner';
+    banner.innerHTML = `
+      <div class="vm-install-inner">
+        <div class="vm-install-icon">
+          <img src="assets/icon-192.png" alt="" width="44" height="44">
+        </div>
+        <div class="vm-install-text">
+          <strong>Adicionar à tela inicial</strong>
+          <span>Acesso rápido · funciona offline</span>
+        </div>
+        <button class="vm-install-btn" id="vmInstallYes">INSTALAR</button>
+        <button class="vm-install-close" id="vmInstallNo" aria-label="Fechar">✕</button>
+      </div>
+    `;
+    document.body.appendChild(banner);
+    setTimeout(() => banner.classList.add('show'), 500);
+    document.getElementById('vmInstallYes').addEventListener('click', async () => {
+      haptic([10]);
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log('[VM] Install outcome:', outcome);
+        deferredPrompt = null;
+      }
+      banner.classList.remove('show');
+      setTimeout(() => banner.remove(), 300);
+    });
+    document.getElementById('vmInstallNo').addEventListener('click', () => {
+      sessionStorage.setItem('vm_install_dismissed', '1');
+      banner.classList.remove('show');
+      setTimeout(() => banner.remove(), 300);
+    });
+  }
+
+  // iOS install hint (iOS não suporta beforeinstallprompt — mostra instruções)
+  function isIOS() {
+    return /iPhone|iPad|iPod/.test(navigator.userAgent) && !window.MSStream;
+  }
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  }
+  if (isIOS() && !isStandalone() && !sessionStorage.getItem('vm_ios_hint_seen')) {
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        if (document.getElementById('vmInstallBanner')) return;
+        const hint = document.createElement('div');
+        hint.id = 'vmInstallBanner';
+        hint.classList.add('ios');
+        hint.innerHTML = `
+          <div class="vm-install-inner">
+            <div class="vm-install-icon">
+              <img src="assets/icon-192.png" alt="" width="44" height="44">
+            </div>
+            <div class="vm-install-text">
+              <strong>Adicione à tela inicial</strong>
+              <span>Toque em <span class="ios-share">⇪</span> abaixo e "Adicionar à Tela de Início"</span>
+            </div>
+            <button class="vm-install-close" id="vmInstallNoIos" aria-label="Fechar">✕</button>
+          </div>
+        `;
+        document.body.appendChild(hint);
+        setTimeout(() => hint.classList.add('show'), 300);
+        document.getElementById('vmInstallNoIos').addEventListener('click', () => {
+          sessionStorage.setItem('vm_ios_hint_seen', '1');
+          hint.classList.remove('show');
+          setTimeout(() => hint.remove(), 300);
+        });
+      }, 4000);
+    });
+  }
+
+  // ───── 5. Lazy load do Three.js (só carrega quando clica "VER MAQUETE 3D REAL") ─────
+  // (O sistema atual já carrega só no click; este bloco garante remoção do importmap pesado se
+  //  o usuário nunca abrir o modal. Como já é lazy no evento, apenas instrumentamos tempo.)
+  const startTime = performance.now();
+  window.addEventListener('vm:openMaquete', () => {
+    console.log('[VM] Maquete 3D abriu em', Math.round(performance.now() - startTime), 'ms após load');
+  }, { once: true });
+
+  // ───── 6. Force keyboard correto em inputs ─────
+  document.addEventListener('DOMContentLoaded', () => {
+    // CEP/cidade
+    const cep = document.getElementById('cep');
+    if (cep && !cep.hasAttribute('autocomplete')) {
+      cep.setAttribute('autocomplete', 'postal-code');
+      cep.setAttribute('inputmode', 'text');
+    }
+    // Form de e-mail
+    const form = document.getElementById('emailForm');
+    if (form) {
+      const email = form.querySelector('[name=email]');
+      const tel = form.querySelector('[name=telefone]');
+      const nome = form.querySelector('[name=nome]');
+      const empresa = form.querySelector('[name=empresa]');
+      if (email) { email.setAttribute('autocomplete', 'email'); email.setAttribute('inputmode', 'email'); }
+      if (tel) { tel.setAttribute('autocomplete', 'tel'); tel.setAttribute('inputmode', 'tel'); }
+      if (nome) nome.setAttribute('autocomplete', 'name');
+      if (empresa) empresa.setAttribute('autocomplete', 'organization');
+    }
+    // Form de qualificação
+    const qualForm = document.getElementById('qualForm');
+    if (qualForm) {
+      qualForm.querySelectorAll('input').forEach(inp => {
+        const n = (inp.name || inp.id || '').toLowerCase();
+        if (!inp.hasAttribute('autocomplete')) {
+          if (/mail/.test(n)) inp.setAttribute('autocomplete', 'email');
+          else if (/tel|phone|whats|celular/.test(n)) inp.setAttribute('autocomplete', 'tel');
+          else if (/nome|name/.test(n)) inp.setAttribute('autocomplete', 'name');
+          else if (/empresa|company|razao/.test(n)) inp.setAttribute('autocomplete', 'organization');
+          else if (/cep|cidade|endereco/.test(n)) inp.setAttribute('autocomplete', 'postal-code');
+        }
+      });
+    }
+  });
+
+  // ───── 7. Marca que é PWA no body (pra CSS ajustar se quiser) ─────
+  if (isStandalone()) document.documentElement.classList.add('is-pwa');
+
+  console.log('[VM LAB] Features carregadas: PWA, Share, Haptic, Lazy 3D, AutoComplete');
+})();
+</script>
+
+<style>
+/* ═══ Banner de instalação PWA ═══ */
+#vmInstallBanner {
+  position: fixed; left: 12px; right: 12px; bottom: 16px;
+  z-index: 9998;
+  background: linear-gradient(135deg, #141414 0%, #0a0a0a 100%);
+  border: 2px solid var(--yellow, #FFD700);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6), 0 0 20px rgba(255,215,0,0.15);
+  padding: 14px 16px;
+  transform: translateY(130%);
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  max-width: 440px;
+  margin: 0 auto;
+}
+#vmInstallBanner.show { transform: translateY(0); }
+.vm-install-inner {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+}
+.vm-install-icon {
+  width: 44px; height: 44px;
+  border-radius: 10px; overflow: hidden;
+  background: #0A0A0A;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.vm-install-icon img { width: 100%; height: 100%; object-fit: cover; }
+.vm-install-text {
+  display: flex; flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.vm-install-text strong {
+  font-size: 0.82rem;
+  color: #FAFAFA;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.vm-install-text span {
+  font-size: 0.68rem;
+  color: rgba(250,250,250,0.65);
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+}
+.vm-install-text .ios-share {
+  display: inline-block;
+  padding: 1px 6px;
+  background: rgba(255,215,0,0.15);
+  border: 1px solid var(--yellow, #FFD700);
+  color: var(--yellow, #FFD700);
+  border-radius: 3px;
+  font-weight: 700;
+}
+.vm-install-btn {
+  background: var(--yellow, #FFD700);
+  color: #0A0A0A;
+  border: none;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  border-radius: 6px;
+  white-space: nowrap;
+  transition: transform 0.15s;
+}
+.vm-install-btn:active { transform: scale(0.95); }
+.vm-install-close {
+  background: transparent;
+  color: rgba(250,250,250,0.6);
+  border: none;
+  padding: 8px 10px;
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.vm-install-close:active { color: #FAFAFA; }
+
+#vmInstallBanner.ios .vm-install-inner {
+  grid-template-columns: auto 1fr auto;
+}
+
+/* Em modo standalone (app instalado), esconder banner */
+html.is-pwa #vmInstallBanner { display: none !important; }
+
+/* Em modo standalone, ajusta safe-area (notch iOS) */
+html.is-pwa body {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+@media (max-width: 400px) {
+  .vm-install-text strong { font-size: 0.76rem; }
+  .vm-install-text span { font-size: 0.62rem; }
+  .vm-install-btn { font-size: 0.62rem; padding: 9px 10px; letter-spacing: 0.06em; }
+}
+</style>
 
 </body>
 </html>
