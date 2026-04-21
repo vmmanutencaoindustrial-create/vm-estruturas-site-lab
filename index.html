@@ -6192,16 +6192,23 @@ document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
     document.getElementById('lblComp').textContent = state.comp + ' m';
     document.getElementById('lblLarg').textContent = state.larg + ' m';
     document.getElementById('lblPe').textContent = state.pe + ' m';
-    document.getElementById('vizSize').textContent = `${state.comp} × ${state.larg} × ${state.pe} m`;
+    var vizSize = document.getElementById('vizSize');
+    if (vizSize) vizSize.textContent = `${state.comp} × ${state.larg} × ${state.pe} m`;
     const r = calc();
-    document.getElementById('outArea').textContent = r.area.toLocaleString('pt-BR') + ' m²';
-    document.getElementById('outAreaSub').textContent = `${state.comp} × ${state.larg} m`;
-    document.getElementById('outAco').textContent = r.peso.toLocaleString('pt-BR') + ' t';
-    document.getElementById('outPrazo').textContent = r.prazo + ' dias';
-    const preco = document.getElementById('outPreco');
-    preco.textContent = brl(r.total);
-    preco.classList.remove('flash'); void preco.offsetWidth; preco.classList.add('flash');
-    renderGalpao();
+    var outArea = document.getElementById('outArea');
+    if (outArea) outArea.textContent = r.area.toLocaleString('pt-BR') + ' m²';
+    var outAreaSub = document.getElementById('outAreaSub');
+    if (outAreaSub) outAreaSub.textContent = `${state.comp} × ${state.larg} m`;
+    var outAco = document.getElementById('outAco');
+    if (outAco) outAco.textContent = r.peso.toLocaleString('pt-BR') + ' t';
+    var outPrazo = document.getElementById('outPrazo');
+    if (outPrazo) outPrazo.textContent = r.prazo + ' dias';
+    var preco = document.getElementById('outPreco');
+    if (preco) {
+      preco.textContent = brl(r.total);
+      preco.classList.remove('flash'); void preco.offsetWidth; preco.classList.add('flash');
+    }
+    if (typeof renderGalpao === 'function') renderGalpao();
     // Atualiza 3D inline em tempo real
     if (window.__vmRebuildInline) window.__vmRebuildInline(state);
   }
