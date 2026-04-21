@@ -120,13 +120,13 @@
   // 1. Captura erros globais para diagnosticar e não travar o site
   var errorCount = 0;
   var MAX_ERRORS_BEFORE_SAFE = 3;
-  var MAX_ERRORS_BEFORE_FALLBACK = 6;
+  var MAX_ERRORS_BEFORE_LIGHT = 6;
 
-  function goToFallback() {
+  function forceLightMode() {
     try {
-      if (!/fallback\.html/i.test(location.pathname)) {
-        location.replace('fallback.html?e=1');
-      }
+      document.documentElement.classList.remove('vm-mode-full');
+      document.documentElement.classList.add('vm-mode-light');
+      window.__vmLight = true;
     } catch (_) {}
   }
 
@@ -4040,15 +4040,28 @@ html.vm-mode-full .vm-light-fab { display: none !important; }
   <a class="vm-light-fab" href="https://wa.me/5511972328541?text=Ol%C3%A1!%20Vim%20pelo%20site%20e%20quero%20or%C3%A7amento.">► WhatsApp</a>
 </div>
 
-<!-- Mobile Notice Banner -->
+<!-- Mobile Notice Banner (só aparece em modo FULL em celular) -->
 <div class="mobile-notice" id="mobileNotice">
-  <div class="mn-title">Site lento no celular?</div>
-  <div class="mn-body">O site tem maquete 3D e simulador — pesado pra celular. Escolha:</div>
+  <div class="mn-title">Site lento?</div>
+  <div class="mn-body">Você está no modo completo (com maquete 3D). Quer a versão leve?</div>
   <div class="mn-btns">
-    <a class="primary" style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;" href="fallback.html">► VERSÃO RÁPIDA</a>
+    <button class="primary" id="mnSwitchLight">► USAR VERSÃO LEVE</button>
     <button id="mnContinue">CONTINUAR AQUI</button>
   </div>
 </div>
+<script>
+// Botão "versão leve" ativa modo light sem reload
+document.addEventListener('click', function(e){
+  if (e.target && e.target.id === 'mnSwitchLight') {
+    document.documentElement.classList.remove('vm-mode-full');
+    document.documentElement.classList.add('vm-mode-light');
+    window.__vmLight = true;
+    var n = document.getElementById('mobileNotice');
+    if (n) n.classList.remove('show');
+    window.scrollTo(0, 0);
+  }
+});
+</script>
 
 <!-- Intro cinematográfico — entrada pelo galpão -->
 <div class="intro" id="intro">
