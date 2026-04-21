@@ -49,9 +49,72 @@
 // ═══ ESCUDO DE COMPATIBILIDADE — deve rodar antes de TUDO ═══
 (function () {
   'use strict';
+
+  // 0. REDIRECT PRA VERSÃO SIMPLES se browser antigo OU hardware fraco
+  try {
+    var ua = navigator.userAgent || '';
+    var isOldIOS = /OS ([0-9]|1[0-2])_/.test(ua) && /iPhone|iPad|iPod/.test(ua);
+    var isOldAndroid = /Android ([0-8])\./.test(ua); // Android ≤ 8 = redirect
+    var isOldIE = /MSIE |Trident\//.test(ua);
+    var isOperaMini = /Opera Mini/i.test(ua);
+    var isUcBrowser = /UCBrowser/i.test(ua);
+    var isAnyAndroid = /Android/.test(ua);
+    var isInApp = /FBAN|FBAV|Instagram|Line\/|MicroMessenger/.test(ua); // browsers in-app pesados
+
+    // Feature tests rápidos
+    var lacksModernJS = (
+      typeof Promise === 'undefined' ||
+      typeof fetch === 'undefined' ||
+      typeof Object.assign === 'undefined' ||
+      !('classList' in document.createElement('div'))
+    );
+
+    // Hardware fraco
+    var lowMemory = (navigator.deviceMemory && navigator.deviceMemory <= 2); // ≤ 2GB RAM
+    var lowCPU = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
+    var saveData = (navigator.connection && navigator.connection.saveData === true);
+    var slowNet = (navigator.connection && /^(slow-2g|2g)$/.test(navigator.connection.effectiveType || ''));
+
+    // Telas muito pequenas (antigos Android) — largura menor que 320 é rara, flag extra
+    var tinyScreen = window.screen && window.screen.width && window.screen.width < 340;
+
+    var shouldFallback = (
+      isOldIOS || isOldAndroid || isOldIE || isOperaMini ||
+      lacksModernJS || lowMemory || lowCPU || saveData || slowNet || tinyScreen || isInApp
+    );
+
+    var isOnFallback = /fallback\.html/i.test(location.pathname);
+
+    // Permitir forçar versão completa via ?full=1
+    if (shouldFallback && !isOnFallback && !/[?&](full|forceFull)=1/.test(location.search)) {
+      var reason = [];
+      if (isOldIOS) reason.push('iOS antigo');
+      if (isOldAndroid) reason.push('Android antigo');
+      if (lowMemory) reason.push('RAM baixa (' + navigator.deviceMemory + 'GB)');
+      if (lowCPU) reason.push('CPU ' + navigator.hardwareConcurrency + ' cores');
+      if (saveData) reason.push('Economia de dados ligada');
+      if (slowNet) reason.push('Rede ' + navigator.connection.effectiveType);
+      if (isInApp) reason.push('Navegador in-app');
+      console.warn('[VM] Redirecionando pra versão light:', reason.join(' · '));
+      location.replace('fallback.html');
+      return;
+    }
+  } catch (_) {
+    // Se detecção falhar, segue normal
+  }
+
   // 1. Captura erros globais para diagnosticar e não travar o site
   var errorCount = 0;
   var MAX_ERRORS_BEFORE_SAFE = 3;
+  var MAX_ERRORS_BEFORE_FALLBACK = 6;
+
+  function goToFallback() {
+    try {
+      if (!/fallback\.html/i.test(location.pathname)) {
+        location.replace('fallback.html?e=1');
+      }
+    } catch (_) {}
+  }
 
   function enterSafeMode(reason) {
     try {
@@ -3624,11 +3687,11 @@ html[data-vm-safe-mode="1"] .vm-geo-wrap { display: none !important; }
 
 <!-- Mobile Notice Banner -->
 <div class="mobile-notice" id="mobileNotice">
-  <div class="mn-title">Melhor no computador</div>
-  <div class="mn-body">O site tem maquete 3D e simulador — roda mais fluido no PC. Mas pode continuar aqui se preferir.</div>
+  <div class="mn-title">Site lento no celular?</div>
+  <div class="mn-body">O site tem maquete 3D e simulador — pesado pra celular. Escolha:</div>
   <div class="mn-btns">
-    <button class="primary" id="mnContinue">► CONTINUAR AQUI</button>
-    <button id="mnCopy">COPIAR LINK</button>
+    <a class="primary" style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;" href="fallback.html">► VERSÃO RÁPIDA</a>
+    <button id="mnContinue">CONTINUAR AQUI</button>
   </div>
 </div>
 
