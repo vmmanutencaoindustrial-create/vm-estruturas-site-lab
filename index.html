@@ -54,12 +54,18 @@
   try {
     var ua = navigator.userAgent || '';
     var isOldIOS = /OS ([0-9]|1[0-2])_/.test(ua) && /iPhone|iPad|iPod/.test(ua);
-    var isOldAndroid = /Android ([0-8])\./.test(ua); // Android ≤ 8 = redirect
+    var isOldAndroid = /Android ([0-9]|1[0-1])\./.test(ua); // Android ≤ 11 = redirect (segurança)
     var isOldIE = /MSIE |Trident\//.test(ua);
     var isOperaMini = /Opera Mini/i.test(ua);
     var isUcBrowser = /UCBrowser/i.test(ua);
     var isAnyAndroid = /Android/.test(ua);
     var isInApp = /FBAN|FBAV|Instagram|Line\/|MicroMessenger/.test(ua); // browsers in-app pesados
+
+    // Browsers chineses notoriamente problemáticos com JS moderno/WebGL:
+    var isChinaBrowser = /HeyTap|ColorOS|Oppo|Realme|OnePlus|MiuiBrowser|HuaweiBrowser|Quark|QQBrowser|Baidu|360Browser|Vivo|VivoBrowser/i.test(ua);
+
+    // Samsung Internet também é inconsistente com algumas features modernas:
+    var isSamsungInternet = /SamsungBrowser/i.test(ua);
 
     // Feature tests rápidos
     var lacksModernJS = (
@@ -79,7 +85,8 @@
     var tinyScreen = window.screen && window.screen.width && window.screen.width < 340;
 
     var shouldFallback = (
-      isOldIOS || isOldAndroid || isOldIE || isOperaMini ||
+      isOldIOS || isOldAndroid || isOldIE || isOperaMini || isUcBrowser ||
+      isChinaBrowser || // Oppo/Realme/OnePlus/MIUI/Huawei/Vivo/QQ/Baidu/360
       lacksModernJS || lowMemory || lowCPU || saveData || slowNet || tinyScreen || isInApp
     );
 
@@ -89,12 +96,14 @@
     if (shouldFallback && !isOnFallback && !/[?&](full|forceFull)=1/.test(location.search)) {
       var reason = [];
       if (isOldIOS) reason.push('iOS antigo');
-      if (isOldAndroid) reason.push('Android antigo');
+      if (isOldAndroid) reason.push('Android ≤ 11');
+      if (isChinaBrowser) reason.push('Browser OEM (Oppo/Xiaomi/etc)');
+      if (isUcBrowser) reason.push('UC Browser');
       if (lowMemory) reason.push('RAM baixa (' + navigator.deviceMemory + 'GB)');
       if (lowCPU) reason.push('CPU ' + navigator.hardwareConcurrency + ' cores');
-      if (saveData) reason.push('Economia de dados ligada');
+      if (saveData) reason.push('Economia de dados');
       if (slowNet) reason.push('Rede ' + navigator.connection.effectiveType);
-      if (isInApp) reason.push('Navegador in-app');
+      if (isInApp) reason.push('In-app browser');
       console.warn('[VM] Redirecionando pra versão light:', reason.join(' · '));
       location.replace('fallback.html');
       return;
@@ -3684,6 +3693,27 @@ html[data-vm-safe-mode="1"] .vm-geo-wrap { display: none !important; }
 </div>
 
 <a href="#hero" class="skip-link">Pular para o conteúdo</a>
+
+<!-- Fallback sem JS (último recurso) -->
+<noscript>
+  <div style="padding:20px;background:#FFD700;color:#0A0A0A;text-align:center;font-family:system-ui,Arial,sans-serif;">
+    <b>JavaScript desativado.</b> <a href="fallback.html" style="color:#0A0A0A;font-weight:800;text-decoration:underline;">Abrir versão simples →</a>
+  </div>
+</noscript>
+
+<!-- Link discreto pra versão leve no topo (todos os celulares) -->
+<a href="fallback.html" id="vmLightHint" style="display:none;position:fixed;top:0;right:0;z-index:9999;background:#FFD700;color:#0A0A0A;padding:6px 12px;font-size:11px;font-weight:800;letter-spacing:1px;text-decoration:none;font-family:'JetBrains Mono',ui-monospace,monospace;border-bottom-left-radius:4px;">⚡ Versão rápida</a>
+<script>
+// Mostra link "versão rápida" se for mobile e não PWA instalado
+(function(){
+  try {
+    if (/Mobi|Android|iPhone/.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches) {
+      var el = document.getElementById('vmLightHint');
+      if (el) el.style.display = 'inline-block';
+    }
+  } catch(_){}
+})();
+</script>
 
 <!-- Mobile Notice Banner -->
 <div class="mobile-notice" id="mobileNotice">
