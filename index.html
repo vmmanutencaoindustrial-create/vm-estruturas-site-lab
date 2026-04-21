@@ -251,41 +251,9 @@
     }
   };
 
-  // 4.5. FPS watchdog — se carregou full mas tá travando, degrada pra light
-  //       (só ativa em modo FULL, mede após 2s do load)
-  function startFPSWatchdog() {
-    if (window.__vmLight) return; // já tá em light, nada a fazer
-    if (!('requestAnimationFrame' in window)) return;
-    var SAMPLES = 60; // ~1s em 60fps
-    var BAD_THRESHOLD = 20; // abaixo de 20fps contínuos = ruim
-    var frames = [];
-    var last = performance.now();
-
-    function tick(now) {
-      var dt = now - last;
-      last = now;
-      var fps = 1000 / dt;
-      frames.push(fps);
-      if (frames.length > SAMPLES) frames.shift();
-
-      if (frames.length === SAMPLES) {
-        var avg = frames.reduce(function (a, b) { return a + b; }, 0) / SAMPLES;
-        if (avg < BAD_THRESHOLD) {
-          console.warn('[VM] FPS médio =', avg.toFixed(1), '→ degradando pra light');
-          forceLightMode();
-          try { localStorage.setItem('vm_mode_pref', 'light'); } catch (_) {}
-          return;
-        }
-      }
-      requestAnimationFrame(tick);
-    }
-    setTimeout(function () { requestAnimationFrame(tick); }, 2500);
-  }
-  if (typeof window !== 'undefined') {
-    window.addEventListener('load', function () {
-      setTimeout(startFPSWatchdog, 500);
-    });
-  }
+  // 4.5. FPS watchdog — DESATIVADO por enquanto (estava degradando em full carregado)
+  //  Motivo: mudar classe vm-mode-full → vm-mode-light após Three.js iniciar quebra o render.
+  //  O banner manual "usar versão leve" fica disponível no topo do mobile.
 
   // 5. User agent info pra debug
   window.__vmEnv = {
@@ -535,18 +503,9 @@ html.vm-mode-full .vm-light-fab { display: none !important; }
   .vm-light-stats { grid-template-columns: 1fr 1fr 1fr 1fr; }
 }
 </style>
-<script>
-// Só carrega GSAP/Three.js se NÃO for modo light (economia de 200KB+)
-(function () {
-  if (document.documentElement.classList.contains('vm-mode-light')) return;
-  var s1 = document.createElement('script');
-  s1.src = 'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js';
-  document.head.appendChild(s1);
-  var s2 = document.createElement('script');
-  s2.src = 'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js';
-  document.head.appendChild(s2);
-})();
-</script>
+<!-- GSAP sync (necessário pro site principal não quebrar) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
