@@ -45,6 +45,107 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="image" href="assets/galpao-fase-01.jpg" fetchpriority="high">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<script>
+// ═══ ESCUDO DE COMPATIBILIDADE — deve rodar antes de TUDO ═══
+(function () {
+  'use strict';
+  // 1. Captura erros globais para diagnosticar e não travar o site
+  var errorCount = 0;
+  var MAX_ERRORS_BEFORE_SAFE = 3;
+
+  function enterSafeMode(reason) {
+    try {
+      document.documentElement.setAttribute('data-vm-safe-mode', '1');
+      console.warn('[VM SAFE MODE]', reason);
+      // Remove elementos de features avançadas
+      var selectors = [
+        '#vmInstallBanner', '#vmReturnToast', '#vmARModal',
+        '#btnVmAR', '#btnShare', '#vmPhotoCard', '.vm-geo-wrap'
+      ];
+      selectors.forEach(function (sel) {
+        var el = document.querySelector(sel);
+        if (el) el.style.display = 'none';
+      });
+    } catch (_) {}
+  }
+
+  window.addEventListener('error', function (e) {
+    errorCount++;
+    console.warn('[VM] JS error:', e.message, 'at', e.filename + ':' + e.lineno);
+    if (errorCount >= MAX_ERRORS_BEFORE_SAFE) {
+      enterSafeMode('Muitos erros JS');
+    }
+    // Não previne: deixa o browser logar no console
+  });
+
+  window.addEventListener('unhandledrejection', function (e) {
+    console.warn('[VM] Promise rejection:', e.reason);
+  });
+
+  // 2. Feature detection — se browser é muito antigo, ativa safe mode preventivo
+  var checks = {
+    promise: typeof Promise !== 'undefined',
+    fetch: typeof fetch !== 'undefined',
+    querySelector: typeof document.querySelector !== 'undefined',
+    addEventListener: typeof window.addEventListener !== 'undefined',
+    intersectionObserver: 'IntersectionObserver' in window,
+    objectAssign: typeof Object.assign !== 'undefined'
+  };
+  var anyFail = Object.keys(checks).filter(function (k) { return !checks[k]; });
+  if (anyFail.length > 0) {
+    enterSafeMode('Browser antigo: falta ' + anyFail.join(', '));
+  }
+
+  // 3. Helper pra features: window.__vmSafe(fn) roda fn em try/catch
+  window.__vmSafe = function (fn, label) {
+    try {
+      return fn();
+    } catch (e) {
+      console.warn('[VM] Feature falhou (' + (label || '?') + '):', e.message);
+      return null;
+    }
+  };
+
+  // 4. Helper async equivalente
+  window.__vmSafeAsync = function (fn, label) {
+    try {
+      return Promise.resolve(fn()).catch(function (e) {
+        console.warn('[VM] Feature async falhou (' + (label || '?') + '):', e.message);
+        return null;
+      });
+    } catch (e) {
+      console.warn('[VM] Feature async falhou (' + (label || '?') + '):', e.message);
+      return Promise.resolve(null);
+    }
+  };
+
+  // 5. User agent info pra debug
+  window.__vmEnv = {
+    isIOS: /iPhone|iPad|iPod/.test(navigator.userAgent),
+    isAndroid: /Android/.test(navigator.userAgent),
+    iosVersion: (function () {
+      var m = navigator.userAgent.match(/OS (\d+)_/);
+      return m ? parseInt(m[1], 10) : 0;
+    })(),
+    supportsModules: 'noModule' in document.createElement('script'),
+    supportsWebShare: 'share' in navigator,
+    supportsGeo: 'geolocation' in navigator,
+    supportsSW: 'serviceWorker' in navigator,
+    supportsVibration: 'vibrate' in navigator
+  };
+  console.log('[VM ENV]', window.__vmEnv);
+})();
+</script>
+<style>
+/* Safe mode: esconde elementos das features avançadas */
+html[data-vm-safe-mode="1"] #vmInstallBanner,
+html[data-vm-safe-mode="1"] #vmReturnToast,
+html[data-vm-safe-mode="1"] #vmARModal,
+html[data-vm-safe-mode="1"] #btnVmAR,
+html[data-vm-safe-mode="1"] #btnShare,
+html[data-vm-safe-mode="1"] #vmPhotoCard,
+html[data-vm-safe-mode="1"] .vm-geo-wrap { display: none !important; }
+</style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
 <script type="application/ld+json">
@@ -2357,6 +2458,9 @@
     display: none;
     position: fixed;
     top: 0; left: 0; right: 0;
+    width: 100%;
+    max-width: 100vw;
+    box-sizing: border-box;
     z-index: 10002;
     background: linear-gradient(135deg, #FFD700 0%, #e8c400 100%);
     color: #0A0A0A;
@@ -2367,19 +2471,37 @@
     letter-spacing: 0.04em;
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     animation: mobileNoticeIn 0.5s cubic-bezier(0.7, 0, 0.2, 1);
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    hyphens: auto;
   }
   @keyframes mobileNoticeIn { from { transform: translateY(-100%); } to { transform: translateY(0); } }
   .mobile-notice.show { display: block; }
   .mobile-notice .mn-title {
     font-family: 'Bebas Neue', sans-serif;
-    font-size: 1.2rem;
-    letter-spacing: 0.04em;
-    line-height: 1;
-    margin-bottom: 4px;
+    font-size: 1.1rem;
+    letter-spacing: 0.03em;
+    line-height: 1.1;
+    margin-bottom: 6px;
     display: flex; align-items: center; gap: 8px;
+    word-break: normal;
+    overflow-wrap: break-word;
   }
-  .mobile-notice .mn-title::before { content: '⚠'; font-size: 1.1rem; }
-  .mobile-notice .mn-body { font-size: 0.72rem; opacity: 0.88; margin-bottom: 10px; }
+  .mobile-notice .mn-title::before { content: '⚠'; font-size: 1rem; flex-shrink: 0; }
+  .mobile-notice .mn-body {
+    font-size: 0.7rem;
+    opacity: 0.88;
+    margin-bottom: 10px;
+    word-break: normal;
+    overflow-wrap: break-word;
+    hyphens: auto;
+    max-width: 100%;
+  }
+  @media (max-width: 400px) {
+    .mobile-notice { padding: 12px 14px; font-size: 0.68rem; }
+    .mobile-notice .mn-title { font-size: 0.98rem; }
+    .mobile-notice .mn-body { font-size: 0.66rem; }
+  }
   .mobile-notice .mn-btns { display: flex; gap: 8px; flex-wrap: wrap; }
   .mobile-notice button {
     flex: 1; min-width: 0;
@@ -3502,8 +3624,8 @@
 
 <!-- Mobile Notice Banner -->
 <div class="mobile-notice" id="mobileNotice">
-  <div class="mn-title">Melhor experiência no desktop</div>
-  <div class="mn-body">Este site usa maquete 3D interativa e configurador avançado — fica mais fluido no computador. Pode continuar aqui no celular se preferir.</div>
+  <div class="mn-title">Melhor no computador</div>
+  <div class="mn-body">O site tem maquete 3D e simulador — roda mais fluido no PC. Mas pode continuar aqui se preferir.</div>
   <div class="mn-btns">
     <button class="primary" id="mnContinue">► CONTINUAR AQUI</button>
     <button id="mnCopy">COPIAR LINK</button>
@@ -7722,11 +7844,16 @@ document.addEventListener('keydown', e => {
   'use strict';
 
   // ───── 1. Service Worker (offline + cache) ─────
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js', { scope: './' })
-        .then(reg => console.log('[VM] Service Worker registrado', reg.scope))
-        .catch(err => console.warn('[VM] SW falhou:', err));
+  // Só registra se suportado E se não estiver em safe mode
+  if ('serviceWorker' in navigator && !document.documentElement.hasAttribute('data-vm-safe-mode')) {
+    window.addEventListener('load', function () {
+      try {
+        navigator.serviceWorker.register('sw.js', { scope: './' })
+          .then(function (reg) { console.log('[VM] SW registrado', reg.scope); })
+          .catch(function (err) { console.warn('[VM] SW falhou:', err); });
+      } catch (e) {
+        console.warn('[VM] SW crash:', e);
+      }
     });
   }
 
