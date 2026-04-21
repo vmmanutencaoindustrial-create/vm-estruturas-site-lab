@@ -84,33 +84,88 @@
     // Telas muito pequenas (antigos Android) — largura menor que 320 é rara, flag extra
     var tinyScreen = window.screen && window.screen.width && window.screen.width < 340;
 
-    var isMobile = /Mobi|Android|iPhone|iPad|iPod/.test(ua);
-    var smallScreen = window.screen && window.screen.width && window.screen.width < 900;
+    // ═══ DETECÇÃO BASEADA EM CAPACIDADE REAL ═══
+    // Abordagem: começa assumindo que roda full. Só força light se EVIDENTE que é fraco.
 
-    // Decisão final: versão LIGHT quando...
-    var shouldBeLight = (
-      isMobile ||                      // qualquer celular
-      smallScreen ||                   // tela pequena
-      isOldIOS || isOldAndroid ||
-      isOldIE || isOperaMini || isUcBrowser ||
-      isChinaBrowser || isInApp ||
-      lacksModernJS || lowMemory || lowCPU ||
-      saveData || slowNet || tinyScreen
+    var isIOS = /iPhone|iPad|iPod/.test(ua);
+    var iosMajor = 0;
+    var m = ua.match(/OS (\d+)_/);
+    if (m) iosMajor = parseInt(m[1], 10);
+
+    var androidMajor = 0;
+    m = ua.match(/Android (\d+)/);
+    if (m) androidMajor = parseInt(m[1], 10);
+
+    // Critérios que INDICAM CAPACIDADE BOA:
+    var modernIOS = isIOS && iosMajor >= 14;                    // iPhone 6s+ com iOS atual
+    var modernAndroid = androidMajor >= 10 && !isChinaBrowser;  // Android 10+ com Chrome
+    var hasGoodRAM = (!('deviceMemory' in navigator) || navigator.deviceMemory >= 4);
+    var hasGoodCPU = (!navigator.hardwareConcurrency || navigator.hardwareConcurrency >= 4);
+    var fastNet = !navigator.connection ||
+                  /^(4g|5g)$/.test(navigator.connection.effectiveType || '') ||
+                  !navigator.connection.effectiveType;
+
+    // Critérios CLAROS que são FRACOS (força light sem hesitar):
+    var definitelyWeak = (
+      lacksModernJS ||              // browser pré-histórico
+      isOldIE ||                    // IE
+      isOperaMini ||                // Opera Mini
+      isUcBrowser ||                // UC Browser
+      isChinaBrowser ||             // Browser OEM China (Oppo/MIUI/Huawei)
+      (isIOS && iosMajor && iosMajor < 13) ||   // iOS 12 ou menor
+      (androidMajor && androidMajor < 8) ||     // Android 7 ou menor
+      (navigator.deviceMemory && navigator.deviceMemory <= 2) || // ≤ 2GB RAM
+      (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2) || // ≤ 2 cores
+      saveData ||                   // "economizar dados" ligado
+      slowNet ||                    // 2G/slow-2g
+      isInApp ||                    // navegador dentro de Instagram/FB
+      tinyScreen                    // tela < 340px (Nokia, feature phones)
     );
 
-    // Permitir forçar "versão completa" via URL ?full=1
-    if (/[?&](full|forceFull)=1/.test(location.search)) {
-      shouldBeLight = false;
-    }
-    // Permitir forçar "versão leve" via URL ?light=1
-    if (/[?&]light=1/.test(location.search)) {
-      shouldBeLight = true;
-    }
+    // Critérios AMBÍGUOS (android genérico, iOS médio) → testa
+    var ambiguousMobile = !modernIOS && !modernAndroid &&
+                          /Mobi|Android|iPhone/.test(ua) &&
+                          !definitelyWeak;
 
-    // Aplica classe no <html> — CSS usa pra mostrar/esconder
+    // Modo padrão: FULL
+    var shouldBeLight = false;
+
+    if (definitelyWeak) {
+      shouldBeLight = true;
+    } else if (ambiguousMobile) {
+      // Ambíguo: se memória/CPU ruim vai light, senão tenta full
+      if (!hasGoodRAM || !hasGoodCPU) {
+        shouldBeLight = true;
+      }
+    }
+    // modernIOS e modernAndroid ficam em full (iPhone 13+, Galaxy S+, Pixel)
+
+    // Override via URL: ?light=1 força leve, ?full=1 força completo
+    if (/[?&](full|forceFull)=1/.test(location.search)) shouldBeLight = false;
+    if (/[?&]light=1/.test(location.search)) shouldBeLight = true;
+
+    // Lembrar escolha do usuário (se já optou antes via toggle)
+    try {
+      var pref = localStorage.getItem('vm_mode_pref');
+      if (pref === 'light') shouldBeLight = true;
+      else if (pref === 'full') shouldBeLight = false;
+    } catch (_) {}
+
     document.documentElement.classList.add(shouldBeLight ? 'vm-mode-light' : 'vm-mode-full');
     window.__vmLight = shouldBeLight;
-    console.log('[VM] Modo:', shouldBeLight ? 'LIGHT (celular/fraco)' : 'FULL (desktop)');
+
+    var reason = [];
+    if (shouldBeLight) {
+      if (definitelyWeak) reason.push('browser/SO fraco');
+      if (isChinaBrowser) reason.push('browser OEM');
+      if (navigator.deviceMemory) reason.push(navigator.deviceMemory + 'GB RAM');
+      if (navigator.hardwareConcurrency) reason.push(navigator.hardwareConcurrency + ' cores');
+      if (slowNet) reason.push('rede ' + navigator.connection.effectiveType);
+    } else {
+      if (modernIOS) reason.push('iOS ' + iosMajor);
+      if (modernAndroid) reason.push('Android ' + androidMajor);
+    }
+    console.log('[VM] Modo:', shouldBeLight ? 'LIGHT' : 'FULL', '(' + reason.join(' · ') + ')');
   } catch (_) {
     // Se detecção falhar, assume full
     document.documentElement.classList.add('vm-mode-full');
@@ -195,6 +250,42 @@
       return Promise.resolve(null);
     }
   };
+
+  // 4.5. FPS watchdog — se carregou full mas tá travando, degrada pra light
+  //       (só ativa em modo FULL, mede após 2s do load)
+  function startFPSWatchdog() {
+    if (window.__vmLight) return; // já tá em light, nada a fazer
+    if (!('requestAnimationFrame' in window)) return;
+    var SAMPLES = 60; // ~1s em 60fps
+    var BAD_THRESHOLD = 20; // abaixo de 20fps contínuos = ruim
+    var frames = [];
+    var last = performance.now();
+
+    function tick(now) {
+      var dt = now - last;
+      last = now;
+      var fps = 1000 / dt;
+      frames.push(fps);
+      if (frames.length > SAMPLES) frames.shift();
+
+      if (frames.length === SAMPLES) {
+        var avg = frames.reduce(function (a, b) { return a + b; }, 0) / SAMPLES;
+        if (avg < BAD_THRESHOLD) {
+          console.warn('[VM] FPS médio =', avg.toFixed(1), '→ degradando pra light');
+          forceLightMode();
+          try { localStorage.setItem('vm_mode_pref', 'light'); } catch (_) {}
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+    setTimeout(function () { requestAnimationFrame(tick); }, 2500);
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('load', function () {
+      setTimeout(startFPSWatchdog, 500);
+    });
+  }
 
   // 5. User agent info pra debug
   window.__vmEnv = {
