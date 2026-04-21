@@ -5455,20 +5455,26 @@ document.documentElement.style.scrollBehavior = 'smooth';
     if (notice) {
       notice.classList.add('show');
       document.body.classList.add('has-mobile-notice');
-      document.getElementById('mnContinue').addEventListener('click', () => {
-        notice.classList.remove('show');
-        document.body.classList.remove('has-mobile-notice');
-        sessionStorage.setItem('vm_mobile_notice_seen', '1');
-      });
-      document.getElementById('mnCopy').addEventListener('click', (e) => {
-        const url = window.location.href;
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(url).then(() => {
-            e.target.textContent = '✓ COPIADO';
-            setTimeout(() => e.target.textContent = 'COPIAR LINK', 2000);
-          }).catch(() => { prompt('Copie este link pro desktop:', url); });
-        } else { prompt('Copie este link pro desktop:', url); }
-      });
+      var btnContinue = document.getElementById('mnContinue');
+      if (btnContinue) {
+        btnContinue.addEventListener('click', function () {
+          notice.classList.remove('show');
+          document.body.classList.remove('has-mobile-notice');
+          sessionStorage.setItem('vm_mobile_notice_seen', '1');
+        });
+      }
+      var btnCopy = document.getElementById('mnCopy');
+      if (btnCopy) {
+        btnCopy.addEventListener('click', function (e) {
+          var url = window.location.href;
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(url).then(function () {
+              e.target.textContent = '✓ COPIADO';
+              setTimeout(function () { e.target.textContent = 'COPIAR LINK'; }, 2000);
+            }).catch(function () { prompt('Copie este link pro desktop:', url); });
+          } else { prompt('Copie este link pro desktop:', url); }
+        });
+      }
     }
   }
 })();
