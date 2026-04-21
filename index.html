@@ -7927,6 +7927,879 @@ document.addEventListener('keydown', e => {
 })();
 </script>
 
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- ═══ LAB v2: CÂMERA + GEO + LEMBRETE + AR ═══ -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+
+  // Estado compartilhado entre features
+  const vmState = {
+    photo: null,          // File da câmera
+    photoDataUrl: null,   // Preview
+    geo: null,            // { lat, lon, city, distanceKm }
+    lastConfigTime: null  // timestamp de última interação
+  };
+  window.__vmLab = vmState;
+
+  // ═══ 1. CÂMERA DO TERRENO ═══
+  (function setupCamera() {
+    document.addEventListener('DOMContentLoaded', () => {
+      const ctaRow = document.querySelector('.cta-row');
+      if (!ctaRow) return;
+
+      // Input file invisível
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = 'image/*';
+      fileInput.capture = 'environment';
+      fileInput.id = 'vmPhotoInput';
+      fileInput.style.display = 'none';
+      document.body.appendChild(fileInput);
+
+      // Card de foto (container com preview)
+      const photoCard = document.createElement('div');
+      photoCard.className = 'vm-photo-card';
+      photoCard.id = 'vmPhotoCard';
+      photoCard.innerHTML = `
+        <button type="button" class="vm-photo-trigger" id="vmPhotoTrigger" aria-label="Adicionar foto do terreno">
+          <span class="vm-photo-icon">📸</span>
+          <span class="vm-photo-label">
+            <strong>Adicionar foto do terreno</strong>
+            <small>Opcional — ajuda o engenheiro no orçamento</small>
+          </span>
+        </button>
+        <div class="vm-photo-preview" id="vmPhotoPreview" hidden>
+          <img id="vmPhotoImg" alt="Foto do terreno">
+          <div class="vm-photo-actions">
+            <button type="button" id="vmPhotoRetake">↻ TROCAR</button>
+            <button type="button" id="vmPhotoRemove">✕ REMOVER</button>
+          </div>
+        </div>
+      `;
+      // Inserir antes da cta-row
+      ctaRow.parentNode.insertBefore(photoCard, ctaRow);
+
+      const trigger = document.getElementById('vmPhotoTrigger');
+      const preview = document.getElementById('vmPhotoPreview');
+      const img = document.getElementById('vmPhotoImg');
+      const retake = document.getElementById('vmPhotoRetake');
+      const remove = document.getElementById('vmPhotoRemove');
+
+      trigger.addEventListener('click', () => fileInput.click());
+      retake.addEventListener('click', () => fileInput.click());
+      remove.addEventListener('click', () => {
+        vmState.photo = null;
+        vmState.photoDataUrl = null;
+        preview.hidden = true;
+        trigger.style.display = '';
+        fileInput.value = '';
+      });
+
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (window.__vmHaptic) window.__vmHaptic([8]);
+
+        // Redimensionar se for muito grande (economia de dados)
+        const resized = await resizeImage(file, 1600, 0.82);
+        vmState.photo = resized.file;
+        vmState.photoDataUrl = resized.dataUrl;
+
+        img.src = resized.dataUrl;
+        preview.hidden = false;
+        trigger.style.display = 'none';
+      });
+    });
+
+    // Util: redimensionar imagem mantendo proporção
+    async function resizeImage(file, maxDim, quality) {
+      const dataUrl = await new Promise((res) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.readAsDataURL(file);
+      });
+      const img = await new Promise((res) => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.src = dataUrl;
+      });
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      const newDataUrl = canvas.toDataURL('image/jpeg', quality);
+      const blob = await (await fetch(newDataUrl)).blob();
+      const newFile = new File([blob], 'terreno.jpg', { type: 'image/jpeg' });
+      return { file: newFile, dataUrl: newDataUrl, width, height };
+    }
+  })();
+
+  // ═══ 2. GEOLOCALIZAÇÃO + REVERSE GEOCODING + DISTÂNCIA DE BARUERI ═══
+  (function setupGeolocation() {
+    const VM_BASE = { lat: -23.5107, lon: -46.8761, city: 'Barueri' };
+
+    // Haversine
+    function distanceKm(a, b) {
+      const R = 6371;
+      const dLat = (b.lat - a.lat) * Math.PI / 180;
+      const dLon = (b.lon - a.lon) * Math.PI / 180;
+      const la1 = a.lat * Math.PI / 180;
+      const la2 = b.lat * Math.PI / 180;
+      const x = Math.sin(dLat/2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon/2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(x));
+    }
+
+    async function reverseGeocode(lat, lon) {
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1&accept-language=pt-BR`,
+          { headers: { 'Accept': 'application/json' } }
+        );
+        if (!r.ok) return null;
+        const d = await r.json();
+        const a = d.address || {};
+        return {
+          city: a.city || a.town || a.village || a.municipality || a.suburb || '',
+          state: a.state || '',
+          postcode: a.postcode || '',
+          road: a.road || '',
+          displayName: d.display_name || ''
+        };
+      } catch (e) {
+        console.warn('[VM] reverseGeocode err', e);
+        return null;
+      }
+    }
+
+    async function detectLocation() {
+      if (!('geolocation' in navigator)) {
+        showGeoStatus('Geolocalização não suportada neste dispositivo', 'err');
+        return;
+      }
+      showGeoStatus('Buscando sua localização...', 'wait');
+      try {
+        const pos = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 60000
+          });
+        });
+        const { latitude: lat, longitude: lon } = pos.coords;
+        const km = distanceKm({ lat, lon }, VM_BASE);
+        const addr = await reverseGeocode(lat, lon);
+
+        vmState.geo = {
+          lat, lon,
+          city: addr?.city || '',
+          state: addr?.state || '',
+          postcode: addr?.postcode || '',
+          distanceKm: km
+        };
+
+        // Preencher campo CEP/cidade
+        const cepInput = document.getElementById('cep');
+        if (cepInput) {
+          const parts = [];
+          if (addr?.city) parts.push(addr.city);
+          if (addr?.state) parts.push(addr.state);
+          if (addr?.postcode) parts.push(addr.postcode);
+          cepInput.value = parts.join(' / ') || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+          cepInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        const kmText = km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+        showGeoStatus(
+          `✓ ${addr?.city || 'Localização detectada'} · ${kmText} da VM (Barueri)`,
+          'ok'
+        );
+        if (window.__vmHaptic) window.__vmHaptic([10, 40, 10]);
+      } catch (e) {
+        let msg = 'Não foi possível detectar sua localização';
+        if (e.code === 1) msg = 'Você negou a permissão de localização';
+        else if (e.code === 3) msg = 'Tempo esgotado — tente novamente';
+        showGeoStatus(msg, 'err');
+      }
+    }
+
+    function showGeoStatus(text, type) {
+      const el = document.getElementById('vmGeoStatus');
+      if (!el) return;
+      el.textContent = text;
+      el.dataset.type = type;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const cepGroup = document.getElementById('cep')?.closest('.ctrl-group');
+      if (!cepGroup) return;
+
+      // Adicionar botão "Usar minha localização" + status
+      const geoWrap = document.createElement('div');
+      geoWrap.className = 'vm-geo-wrap';
+      geoWrap.innerHTML = `
+        <button type="button" class="vm-geo-btn" id="vmGeoBtn">📍 Usar minha localização</button>
+        <div class="vm-geo-status" id="vmGeoStatus" data-type="idle"></div>
+      `;
+      cepGroup.appendChild(geoWrap);
+
+      document.getElementById('vmGeoBtn').addEventListener('click', () => {
+        if (window.__vmHaptic) window.__vmHaptic([8]);
+        detectLocation();
+      });
+    });
+  })();
+
+  // ═══ 3. LEMBRETE IN-APP (detecta retorno, oferece continuar) ═══
+  (function setupReminder() {
+    const KEY = 'vm_project_state_v1';
+
+    // Salva estado do configurador sempre que muda
+    function saveState() {
+      const s = window.state;
+      if (!s || !s.comp) return;
+      const snapshot = {
+        comp: s.comp, larg: s.larg, pe: s.pe, tipo: s.tipo, cob: s.cob,
+        projeto: s.projeto, piso: s.piso, cor: s.cor, cep: s.cep,
+        extras: s.extras,
+        savedAt: Date.now()
+      };
+      try {
+        localStorage.setItem(KEY, JSON.stringify(snapshot));
+      } catch (_) {}
+    }
+
+    // Detecta retorno: se já havia um projeto salvo há > 30min, mostra toast "continuar"
+    function checkReturn() {
+      let raw = null;
+      try { raw = localStorage.getItem(KEY); } catch (_) {}
+      if (!raw) return;
+      try {
+        const s = JSON.parse(raw);
+        const elapsed = Date.now() - (s.savedAt || 0);
+        const minutes = elapsed / 60000;
+        if (minutes < 30) return; // pouco tempo, não importuna
+        if (minutes > 60 * 24 * 7) return; // muito tempo, ignora
+        showContinueToast(s, elapsed);
+      } catch (_) {}
+    }
+
+    function humanTime(ms) {
+      const m = ms / 60000;
+      if (m < 60) return `${Math.round(m)} min atrás`;
+      const h = m / 60;
+      if (h < 24) return `${Math.round(h)}h atrás`;
+      const d = h / 24;
+      return `${Math.round(d)} dia${d >= 2 ? 's' : ''} atrás`;
+    }
+
+    function showContinueToast(s, elapsed) {
+      if (document.getElementById('vmReturnToast')) return;
+      const area = s.comp * s.larg;
+      const toast = document.createElement('div');
+      toast.id = 'vmReturnToast';
+      toast.innerHTML = `
+        <div class="vm-return-inner">
+          <div class="vm-return-icon">↺</div>
+          <div class="vm-return-text">
+            <strong>Continuar seu projeto?</strong>
+            <span>Você montou ${s.comp}×${s.larg}m (${area}m²) · ${humanTime(elapsed)}</span>
+          </div>
+          <button class="vm-return-yes" id="vmReturnYes">CONTINUAR</button>
+          <button class="vm-return-close" id="vmReturnNo" aria-label="Dispensar">✕</button>
+        </div>
+      `;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.classList.add('show'), 1200);
+
+      document.getElementById('vmReturnYes').addEventListener('click', () => {
+        if (window.__vmHaptic) window.__vmHaptic([10]);
+        // Restaurar estado
+        try {
+          if (window.state) {
+            Object.assign(window.state, {
+              comp: s.comp, larg: s.larg, pe: s.pe, tipo: s.tipo,
+              cob: s.cob, projeto: s.projeto, piso: s.piso, cor: s.cor,
+              cep: s.cep, extras: s.extras
+            });
+          }
+          // Trigger update do configurador
+          window.dispatchEvent(new Event('vm:stateRestored'));
+        } catch (_) {}
+        document.getElementById('configurador')?.scrollIntoView({ behavior: 'smooth' });
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+      });
+      document.getElementById('vmReturnNo').addEventListener('click', () => {
+        try { localStorage.removeItem(KEY); } catch (_) {}
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+      });
+
+      // Pedir permissão de notificação (se ainda não tem)
+      if ('Notification' in window && Notification.permission === 'default') {
+        // Esperamos engajamento primeiro
+      }
+    }
+
+    // Hook no state do configurador pra salvar a cada mudança
+    document.addEventListener('DOMContentLoaded', () => {
+      // Timeout pra esperar o configurador inicializar window.state
+      setTimeout(() => {
+        if (!window.state) return;
+        // Watch mudanças via evento click global (simples)
+        document.addEventListener('click', () => setTimeout(saveState, 200), { passive: true });
+        document.addEventListener('input', () => setTimeout(saveState, 500), { passive: true });
+        setInterval(saveState, 20000); // a cada 20s
+      }, 1500);
+
+      // Checar retorno após o site carregar
+      setTimeout(checkReturn, 3000);
+    });
+  })();
+
+  // ═══ 4. AR — VER GALPÃO NO TERRENO (model-viewer + modelo 3D exportado) ═══
+  (function setupAR() {
+    // Carregar model-viewer só quando usuário clicar no botão (lazy)
+    let modelViewerLoaded = false;
+    async function loadModelViewer() {
+      if (modelViewerLoaded) return;
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.type = 'module';
+        s.src = 'https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+      modelViewerLoaded = true;
+    }
+
+    // Exportar cena atual do configurador pra GLB em runtime (Three.js)
+    async function exportCurrentSceneToGLB() {
+      if (!window.THREE) {
+        // Carregar Three já que configurador lazy-carrega só ao abrir maquete
+        await loadThreeModule();
+      }
+      if (!window.__vmCfgScene) {
+        // Construir mini-cena simples baseada em window.state (dimensões)
+        return buildSimpleGalpaoGLB();
+      }
+      // Caminho completo: usar GLTFExporter
+      try {
+        const { GLTFExporter } = await import('https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/exporters/GLTFExporter.js');
+        return new Promise((resolve, reject) => {
+          const exporter = new GLTFExporter();
+          exporter.parse(
+            window.__vmCfgScene,
+            (buffer) => {
+              const blob = new Blob([buffer], { type: 'model/gltf-binary' });
+              resolve(URL.createObjectURL(blob));
+            },
+            (err) => reject(err),
+            { binary: true }
+          );
+        });
+      } catch (e) {
+        console.warn('[VM] GLTFExporter falhou, usando modelo simples:', e);
+        return buildSimpleGalpaoGLB();
+      }
+    }
+
+    async function loadThreeModule() {
+      if (window.THREE) return;
+      const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js');
+      window.THREE = THREE;
+    }
+
+    // Fallback: construir GLB simples (caixa + cobertura) baseado no state
+    async function buildSimpleGalpaoGLB() {
+      await loadThreeModule();
+      const THREE = window.THREE;
+      const s = window.state || { comp: 40, larg: 20, pe: 8 };
+
+      const scene = new THREE.Scene();
+
+      // Escala: 1 unidade = 1 metro. AR: iremos reduzir 0.05x pra caber no mundo real.
+      const SCALE = 0.05;
+      const comp = s.comp * SCALE;
+      const larg = s.larg * SCALE;
+      const pe = s.pe * SCALE;
+
+      // Piso
+      const piso = new THREE.Mesh(
+        new THREE.BoxGeometry(comp + 0.1, 0.02, larg + 0.1),
+        new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.9 })
+      );
+      piso.position.y = 0;
+      scene.add(piso);
+
+      // Paredes
+      const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, roughness: 0.7 });
+      const wallTh = 0.02;
+      // 4 paredes
+      const wF = new THREE.Mesh(new THREE.BoxGeometry(comp, pe, wallTh), wallMat);
+      wF.position.set(0, pe/2, larg/2); scene.add(wF);
+      const wB = new THREE.Mesh(new THREE.BoxGeometry(comp, pe, wallTh), wallMat);
+      wB.position.set(0, pe/2, -larg/2); scene.add(wB);
+      const wL = new THREE.Mesh(new THREE.BoxGeometry(wallTh, pe, larg), wallMat);
+      wL.position.set(-comp/2, pe/2, 0); scene.add(wL);
+      const wR = new THREE.Mesh(new THREE.BoxGeometry(wallTh, pe, larg), wallMat);
+      wR.position.set(comp/2, pe/2, 0); scene.add(wR);
+
+      // Cobertura (prisma triangular)
+      const roofHeight = larg * 0.15;
+      const roofShape = new THREE.Shape();
+      roofShape.moveTo(-larg/2, 0);
+      roofShape.lineTo(larg/2, 0);
+      roofShape.lineTo(0, roofHeight);
+      roofShape.lineTo(-larg/2, 0);
+      const roofGeo = new THREE.ExtrudeGeometry(roofShape, { depth: comp, bevelEnabled: false });
+      const roof = new THREE.Mesh(roofGeo, new THREE.MeshStandardMaterial({
+        color: 0x1a1a1a, roughness: 0.5, metalness: 0.3
+      }));
+      roof.rotation.y = Math.PI / 2;
+      roof.position.set(-comp/2, pe, 0);
+      scene.add(roof);
+
+      // Detalhe amarelo (faixa VM)
+      const faixa = new THREE.Mesh(
+        new THREE.BoxGeometry(comp + 0.02, 0.08, wallTh + 0.01),
+        new THREE.MeshStandardMaterial({ color: 0xFFD700, roughness: 0.4, metalness: 0.1 })
+      );
+      faixa.position.set(0, pe * 0.35, larg/2 + 0.005);
+      scene.add(faixa);
+
+      // Luzes
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const dl = new THREE.DirectionalLight(0xffffff, 0.9);
+      dl.position.set(2, 4, 3);
+      scene.add(dl);
+
+      // Exportar
+      const { GLTFExporter } = await import('https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/exporters/GLTFExporter.js');
+      return new Promise((resolve, reject) => {
+        new GLTFExporter().parse(
+          scene,
+          (buffer) => {
+            const blob = new Blob([buffer], { type: 'model/gltf-binary' });
+            resolve(URL.createObjectURL(blob));
+          },
+          (err) => reject(err),
+          { binary: true }
+        );
+      });
+    }
+
+    async function openAR() {
+      if (window.__vmHaptic) window.__vmHaptic([10]);
+
+      // Criar modal AR
+      let modal = document.getElementById('vmARModal');
+      if (modal) {
+        modal.classList.add('open');
+      } else {
+        modal = document.createElement('div');
+        modal.id = 'vmARModal';
+        modal.innerHTML = `
+          <div class="vm-ar-inner">
+            <button class="vm-ar-close" id="vmARClose" aria-label="Fechar">✕</button>
+            <div class="vm-ar-header">
+              <span class="vm-ar-tag">⬢ REALIDADE AUMENTADA</span>
+              <span class="vm-ar-sub">Aponte a câmera pro seu terreno</span>
+            </div>
+            <div class="vm-ar-viewer" id="vmARViewer">
+              <div class="vm-ar-loading">
+                <div class="vm-ar-spinner"></div>
+                <p>Gerando modelo 3D do seu galpão...</p>
+              </div>
+            </div>
+            <div class="vm-ar-tips">
+              <p>► <b>Android:</b> toque no cubinho canto superior direito pra ativar AR</p>
+              <p>► <b>iPhone:</b> AR abre automático no Safari</p>
+              <p>► <b>PC:</b> arraste pra girar, scroll pra zoom</p>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(modal);
+        document.getElementById('vmARClose').addEventListener('click', () => {
+          modal.classList.remove('open');
+          setTimeout(() => {
+            const v = document.querySelector('#vmARViewer model-viewer');
+            if (v) v.dismissPoster();
+          }, 300);
+        });
+      }
+      modal.classList.add('open');
+
+      try {
+        await loadModelViewer();
+        const glbUrl = await exportCurrentSceneToGLB();
+        const viewer = document.getElementById('vmARViewer');
+        viewer.innerHTML = `
+          <model-viewer
+            src="${glbUrl}"
+            alt="Galpão VM em 3D"
+            ar
+            ar-modes="webxr scene-viewer quick-look"
+            camera-controls
+            touch-action="pan-y"
+            shadow-intensity="1"
+            auto-rotate
+            auto-rotate-delay="2000"
+            style="width:100%;height:100%;background:#0a0a0a;">
+            <button slot="ar-button" class="vm-ar-launch">
+              ▶ VER NO MEU TERRENO
+            </button>
+          </model-viewer>
+        `;
+      } catch (e) {
+        console.error('[VM AR] falhou:', e);
+        document.getElementById('vmARViewer').innerHTML = `
+          <div class="vm-ar-error">
+            <p>⚠ Não foi possível gerar o modelo AR.</p>
+            <p><small>${e.message || e}</small></p>
+          </div>
+        `;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // Adicionar botão AR no configurador (ao lado do botão "VER MAQUETE 3D REAL")
+      const btnMaquete = document.getElementById('btnMaquete');
+      if (!btnMaquete) return;
+      const btnAR = document.createElement('a');
+      btnAR.href = '#';
+      btnAR.className = 'btn-cfg fill';
+      btnAR.id = 'btnVmAR';
+      btnAR.style.cssText = 'background:#9333EA;border-color:#9333EA;color:#fff;';
+      btnAR.innerHTML = '🥽 VER NO MEU TERRENO (AR)';
+      btnAR.addEventListener('click', (e) => { e.preventDefault(); openAR(); });
+      btnMaquete.parentNode.insertBefore(btnAR, btnMaquete.nextSibling);
+    });
+  })();
+
+  // ═══ INTEGRAÇÃO: anexar foto ao Web Share ═══
+  const originalShare = window.__vmShare;
+  window.__vmShare = async function (summary) {
+    const photo = vmState.photo;
+    const url = location.href.split('#')[0];
+    const title = 'VM Estruturas Metálicas';
+    const text = summary || 'Veja este projeto de galpão que montei no configurador da VM:';
+
+    // Se tem foto E browser aceita file-share
+    if (photo && navigator.canShare && navigator.canShare({ files: [photo] })) {
+      try {
+        if (window.__vmHaptic) window.__vmHaptic([8]);
+        await navigator.share({ title, text: `${text}\n\n${url}`, files: [photo] });
+        return;
+      } catch (e) {
+        if (e.name !== 'AbortError') console.warn('[VM] share files falhou, fallback:', e);
+      }
+    }
+    // Fallback: compartilhar só texto+url
+    return originalShare ? originalShare(summary) : null;
+  };
+
+  // ═══ INTEGRAÇÃO: sobrescrever btnEnviarProjeto pra incluir geo/foto na msg WhatsApp ═══
+  document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('btnEnviarProjeto');
+    if (!btn) return;
+    // Substituir listener: adicionar contexto extra
+    const newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+
+    newBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.__vmHaptic) window.__vmHaptic([10]);
+
+      let msg = typeof window.__vmBuildProjectSummary === 'function'
+        ? window.__vmBuildProjectSummary()
+        : 'Gostaria de receber orçamento de galpão metálico.';
+
+      if (vmState.geo) {
+        const km = vmState.geo.distanceKm < 1
+          ? `${Math.round(vmState.geo.distanceKm * 1000)} m`
+          : `${vmState.geo.distanceKm.toFixed(1)} km`;
+        msg += `\n\n📍 Localização detectada: ${vmState.geo.city || 'terreno'} (${km} da VM em Barueri)`;
+      }
+      if (vmState.photo) {
+        msg += '\n\n📸 Tenho foto do terreno pra compartilhar — vou anexar no WhatsApp.';
+      }
+
+      // Se tem foto: tenta Web Share API com files (inclui foto)
+      if (vmState.photo && navigator.canShare && navigator.canShare({ files: [vmState.photo] })) {
+        navigator.share({
+          title: 'VM Estruturas — Meu projeto',
+          text: msg,
+          files: [vmState.photo]
+        }).catch((err) => {
+          if (err.name !== 'AbortError') {
+            // Fallback: abre WhatsApp normal
+            window.open('https://wa.me/5511972328541?text=' + encodeURIComponent(msg), '_blank', 'noopener');
+          }
+        });
+      } else {
+        window.open('https://wa.me/5511972328541?text=' + encodeURIComponent(msg), '_blank', 'noopener');
+      }
+    });
+  });
+
+  console.log('[VM LAB v2] Features: Câmera, Geo, Lembrete, AR');
+})();
+</script>
+
+<style>
+/* ═══ Card da FOTO DO TERRENO ═══ */
+.vm-photo-card {
+  margin: 20px 0 8px;
+  padding: 0;
+}
+.vm-photo-trigger {
+  width: 100%;
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, rgba(255,215,0,0.05), rgba(255,215,0,0.01));
+  border: 2px dashed rgba(255,215,0,0.35);
+  color: #FAFAFA;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  transition: all 0.2s;
+  text-align: left;
+}
+.vm-photo-trigger:hover,
+.vm-photo-trigger:active {
+  background: rgba(255,215,0,0.08);
+  border-color: var(--yellow, #FFD700);
+}
+.vm-photo-icon { font-size: 1.8rem; flex-shrink: 0; }
+.vm-photo-label { display: flex; flex-direction: column; gap: 2px; }
+.vm-photo-label strong {
+  font-size: 0.82rem; letter-spacing: 0.04em; font-weight: 700;
+}
+.vm-photo-label small {
+  font-size: 0.68rem;
+  color: rgba(250,250,250,0.55);
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+.vm-photo-preview {
+  position: relative;
+  background: #0a0a0a;
+  border: 2px solid var(--yellow, #FFD700);
+  padding: 6px;
+  border-radius: 4px;
+}
+.vm-photo-preview img {
+  width: 100%; max-height: 280px;
+  object-fit: cover;
+  display: block;
+}
+.vm-photo-actions {
+  display: flex; gap: 6px;
+  margin-top: 6px;
+}
+.vm-photo-actions button {
+  flex: 1;
+  background: #1a1a1a;
+  color: rgba(250,250,250,0.8);
+  border: 1px solid #2a2a2a;
+  padding: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.vm-photo-actions button:hover { background: #2a2a2a; color: var(--yellow, #FFD700); }
+
+/* ═══ GEO button + status ═══ */
+.vm-geo-wrap {
+  margin-top: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.vm-geo-btn {
+  background: rgba(34, 197, 94, 0.12);
+  border: 1.5px solid rgba(34, 197, 94, 0.55);
+  color: #4ade80;
+  padding: 12px 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-height: 44px;
+}
+.vm-geo-btn:hover { background: rgba(34,197,94,0.2); color: #86efac; }
+.vm-geo-btn:active { transform: scale(0.98); }
+.vm-geo-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  padding: 0 2px;
+  min-height: 16px;
+  line-height: 1.4;
+}
+.vm-geo-status[data-type="ok"] { color: #4ade80; }
+.vm-geo-status[data-type="err"] { color: #f87171; }
+.vm-geo-status[data-type="wait"] { color: rgba(250,250,250,0.6); }
+.vm-geo-status[data-type="idle"] { display: none; }
+
+/* ═══ TOAST de retorno ═══ */
+#vmReturnToast {
+  position: fixed; left: 12px; right: 12px; top: 80px;
+  z-index: 9997;
+  background: linear-gradient(135deg, #14532d 0%, #0a0a0a 100%);
+  border: 2px solid #4ade80;
+  border-radius: 12px;
+  padding: 14px 16px;
+  transform: translateY(-150%);
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  font-family: 'JetBrains Mono', monospace;
+  max-width: 440px; margin: 0 auto;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+#vmReturnToast.show { transform: translateY(0); }
+.vm-return-inner {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px; align-items: center;
+}
+.vm-return-icon {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: rgba(74, 222, 128, 0.2);
+  border: 2px solid #4ade80;
+  display: flex; align-items: center; justify-content: center;
+  color: #4ade80; font-size: 1.3rem; font-weight: 800;
+  flex-shrink: 0;
+}
+.vm-return-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vm-return-text strong { font-size: 0.82rem; color: #FAFAFA; }
+.vm-return-text span { font-size: 0.68rem; color: rgba(250,250,250,0.65); }
+.vm-return-yes {
+  background: #4ade80; color: #0a0a0a;
+  border: none; padding: 9px 12px;
+  font-family: inherit; font-size: 0.68rem;
+  font-weight: 800; letter-spacing: 0.08em;
+  cursor: pointer; border-radius: 6px; white-space: nowrap;
+}
+.vm-return-yes:active { transform: scale(0.95); }
+.vm-return-close {
+  background: transparent; color: rgba(250,250,250,0.6);
+  border: none; padding: 6px 8px; cursor: pointer; font-size: 0.9rem;
+}
+
+/* ═══ Modal AR ═══ */
+#vmARModal {
+  position: fixed; inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.92);
+  backdrop-filter: blur(10px);
+  display: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#vmARModal.open {
+  display: flex; align-items: center; justify-content: center;
+  opacity: 1;
+}
+.vm-ar-inner {
+  width: 100%; max-width: 800px;
+  height: 100%; max-height: 95vh;
+  background: #0a0a0a;
+  border: 2px solid #9333EA;
+  display: flex; flex-direction: column;
+  position: relative;
+  margin: 12px;
+}
+.vm-ar-close {
+  position: absolute; top: 10px; right: 10px;
+  z-index: 2;
+  width: 36px; height: 36px;
+  background: rgba(147, 51, 234, 0.9);
+  border: none; color: white;
+  font-size: 1rem; cursor: pointer;
+  border-radius: 50%;
+}
+.vm-ar-header {
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(147,51,234,0.3);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.vm-ar-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem; font-weight: 800;
+  color: #c084fc; letter-spacing: 0.2em;
+}
+.vm-ar-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+  color: rgba(250,250,250,0.7);
+}
+.vm-ar-viewer {
+  flex: 1; position: relative;
+  min-height: 320px;
+  background: #0a0a0a;
+  display: flex; align-items: center; justify-content: center;
+}
+.vm-ar-loading, .vm-ar-error {
+  text-align: center;
+  color: rgba(250,250,250,0.7);
+  font-family: 'JetBrains Mono', monospace;
+  padding: 20px;
+}
+.vm-ar-loading p { font-size: 0.82rem; margin-top: 14px; }
+.vm-ar-spinner {
+  width: 46px; height: 46px;
+  border: 3px solid #2a2a2a;
+  border-top-color: #9333EA;
+  border-radius: 50%;
+  margin: 0 auto;
+  animation: vmSpin 0.9s linear infinite;
+}
+@keyframes vmSpin { to { transform: rotate(360deg); } }
+.vm-ar-error p { margin: 4px 0; }
+.vm-ar-error small { font-size: 0.66rem; color: rgba(250,250,250,0.5); }
+.vm-ar-tips {
+  padding: 14px 18px;
+  border-top: 1px solid rgba(147,51,234,0.3);
+  background: rgba(147,51,234,0.04);
+  font-family: 'JetBrains Mono', monospace;
+}
+.vm-ar-tips p {
+  font-size: 0.68rem;
+  color: rgba(250,250,250,0.75);
+  margin: 4px 0;
+  letter-spacing: 0.03em;
+  line-height: 1.5;
+}
+.vm-ar-launch {
+  position: absolute;
+  bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: #9333EA; color: white;
+  padding: 14px 24px;
+  border: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 800; font-size: 0.82rem;
+  letter-spacing: 0.12em; cursor: pointer;
+  border-radius: 4px;
+  box-shadow: 0 4px 20px rgba(147,51,234,0.4);
+}
+@media (max-width: 500px) {
+  .vm-ar-inner { margin: 0; max-height: 100vh; }
+  .vm-ar-tag { font-size: 0.62rem; }
+  .vm-ar-sub { font-size: 0.68rem; }
+  .vm-ar-tips p { font-size: 0.62rem; }
+}
+</style>
+
 <style>
 /* ═══ Banner de instalação PWA ═══ */
 #vmInstallBanner {
