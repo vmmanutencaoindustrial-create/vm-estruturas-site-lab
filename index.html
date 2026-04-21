@@ -2876,8 +2876,15 @@ html.vm-mode-full .vm-light-fab { display: none !important; }
   }
   .mobile-notice button.primary { background: #0A0A0A; color: #FFD700; }
   .mobile-notice button:hover { transform: translateY(-1px); }
-  .mobile-notice.show + nav { top: 115px; transition: top 0.4s; }
-  body.has-mobile-notice nav { top: 115px; }
+  /* Quando o banner aparece, empurra todo o conteúdo pra baixo */
+  body.has-mobile-notice { padding-top: 150px; transition: padding-top 0.3s; }
+  body.has-mobile-notice nav { top: 150px; }
+  body.has-mobile-notice .gate-intro,
+  body.has-mobile-notice .intro { top: 150px !important; }
+  @media (max-width: 400px) {
+    body.has-mobile-notice { padding-top: 135px; }
+    body.has-mobile-notice nav { top: 135px; }
+  }
 
   /* ═══ WhatsApp FAB (Floating Action Button) sempre visível ═══ */
   .wa-fab {
